@@ -764,9 +764,6 @@ int main(int argc, char* argv[]) {
 
   const int MIN_VOLUME = LEON ? 12 : 9;
   const int MAX_VOLUME = LEON ? 15 : 11;
-  if(s->scene.controls_state.getVEgo() > 29) {
-    MAX_VOLUME = 0;
-  }
   assert(s->sound.init(MIN_VOLUME));
 
   int draws = 0;
