@@ -25,7 +25,6 @@ struct CarEvent @0x9b1657f34caf3ad3 {
     canError @0;
     steerUnavailable @1;
     brakeUnavailable @2;
-    gasUnavailable @3;
     wrongGear @4;
     doorOpen @5;
     seatbeltNotLatched @6;
@@ -38,7 +37,6 @@ struct CarEvent @0x9b1657f34caf3ad3 {
     pedalPressed @13;
     cruiseDisabled @14;
     radarCanError @15;
-    dataNeededDEPRECATED @16;
     speedTooLow @17;
     outOfSpace @18;
     overheat @19;
@@ -49,29 +47,22 @@ struct CarEvent @0x9b1657f34caf3ad3 {
     pcmDisable @24;
     noTarget @25;
     radarFault @26;
-    modelCommIssueDEPRECATED @27;
     brakeHold @28;
     parkBrake @29;
     manualRestart @30;
     lowSpeedLockout @31;
     plannerError @32;
-    ipasOverrideDEPRECATED @33;
     debugAlert @34;
     steerTempUnavailableMute @35;
     resumeRequired @36;
     preDriverDistracted @37;
     promptDriverDistracted @38;
     driverDistracted @39;
-    geofenceDEPRECATED @40;
-    driverMonitorOnDEPRECATED @41;
-    driverMonitorOffDEPRECATED @42;
     preDriverUnresponsive @43;
     promptDriverUnresponsive @44;
     driverUnresponsive @45;
     belowSteerSpeed @46;
-    calibrationProgressDEPRECATED @47;
     lowBattery @48;
-    invalidGiraffeHondaDEPRECATED @49;
     vehicleModelInvalid @50;
     controlsFailed @51;
     sensorDataInvalid @52;
@@ -82,7 +73,6 @@ struct CarEvent @0x9b1657f34caf3ad3 {
     preLaneChangeLeft @57;
     preLaneChangeRight @58;
     laneChange @59;
-    invalidGiraffeToyota @60;
     internetConnectivityNeeded @61;
     communityFeatureDisallowed @62;
     lowMemory @63;
@@ -93,7 +83,7 @@ struct CarEvent @0x9b1657f34caf3ad3 {
     driverMonitorLowAcc @68;
     invalidLkasSetting @69;
     speedTooHigh @70;
-    laneChangeBlockedDEPRECATED @71;
+    laneChangeBlocked @71;
     relayMalfunction @72;
     gasPressed @73;
     stockFcw @74;
@@ -103,15 +93,33 @@ struct CarEvent @0x9b1657f34caf3ad3 {
     startupMaster @78;
     fcw @79;
     steerSaturated @80;
-    whitePandaUnsupported @81;
-    startupWhitePanda @82;
-    canErrorPersistent @83;
     belowEngageSpeed @84;
-    preventLaneChange @85;
-    leftBlindspot @86;
-    rightBlindspot @87;
-    turningIndicatorOn @88;
-    lkasButtonOff @89;
+    noGps @85;
+    wrongCruiseMode @87;
+    modeldLagging @89;
+    deviceFalling @90;
+    fanMalfunction @91;
+    cameraMalfunction @92;
+    lkasButtonOff @93;
+    autoLaneChange @94;
+    turningIndicatorOn @95;
+
+    gasUnavailableDEPRECATED @3;
+    dataNeededDEPRECATED @16;
+    modelCommIssueDEPRECATED @27;
+    ipasOverrideDEPRECATED @33;
+    geofenceDEPRECATED @40;
+    driverMonitorOnDEPRECATED @41;
+    driverMonitorOffDEPRECATED @42;
+    calibrationProgressDEPRECATED @47;
+    invalidGiraffeHondaDEPRECATED @49;
+    invalidGiraffeToyotaDEPRECATED @60;
+    whitePandaUnsupportedDEPRECATED @81;
+    startupGreyPandaDEPRECATED @82;
+    canErrorPersistentDEPRECATED @83;
+    focusRecoverActiveDEPRECATED @86;
+    neosUpdateRequiredDEPRECATED @88;
+    modelLagWarningDEPRECATED @93;
   }
 }
 
@@ -171,7 +179,7 @@ struct CarState {
 
   # clutch (manual transmission only)
   clutchPressed @28 :Bool;
-  
+
   # which packets this state came from
   canMonoTimes @12: List(UInt64);
 
@@ -193,6 +201,7 @@ struct CarState {
     available @2 :Bool;
     speedOffset @3 :Float32;
     standstill @4 :Bool;
+    nonAdaptive @5 :Bool;
   }
 
   enum GearShifter {
@@ -407,7 +416,7 @@ struct CarParams {
   mdpsBus @51: Int8;
   sasBus @52: Int8;
   sccBus @53: Int8;
-  autoLcaEnabled @54: Bool;
+  spasEnabled @54: Bool;
 
   struct LateralParams {
     torqueBP @0 :List(Int32);
@@ -476,6 +485,8 @@ struct CarParams {
     hondaBoschHarness @20;
     volkswagenPq @21;
     subaruLegacy @22;  # pre-Global platform
+    hyundaiLegacy @23;
+    hyundaiCommunity @24;
   }
 
   enum SteerControlType {

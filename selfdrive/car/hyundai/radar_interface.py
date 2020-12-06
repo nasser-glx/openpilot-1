@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import os
-import time
 from cereal import car
 from opendbc.can.parser import CANParser
 from selfdrive.car.interfaces import RadarInterfaceBase
@@ -27,20 +25,17 @@ class RadarInterface(RadarInterfaceBase):
     self.updated_messages = set()
     self.trigger_msg = 0x420
     self.track_id = 0
-    self.radar_off_can = CP.sccBus == -1
+    self.radar_off_can = CP.radarOffCan
 
   def update(self, can_strings):
     if self.radar_off_can:
-      if 'NO_RADAR_SLEEP' not in os.environ:
-        time.sleep(0.05)  # radard runs on RI updates
-
-      return car.RadarData.new_message()
+      return super().update(None)
 
     vls = self.rcp.update_strings(can_strings)
     self.updated_messages.update(vls)
 
     if self.trigger_msg not in self.updated_messages:
-      return None
+      return car.RadarData.new_message()
 
     rr = self._update(self.updated_messages)
     self.updated_messages.clear()
@@ -55,7 +50,7 @@ class RadarInterface(RadarInterfaceBase):
       errors.append("canError")
     ret.errors = errors
 
-    valid = cpt["SCC11"]['ACC_ObjStatus'] and cpt["SCC11"]['ObjValid']
+    valid = cpt["SCC11"]['ACC_ObjStatus']
     if valid:
       for ii in range(2):
         if ii not in self.pts:

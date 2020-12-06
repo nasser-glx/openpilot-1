@@ -1,14 +1,15 @@
-#include "thneed.h"
 #include <cassert>
 #include <sys/mman.h>
 #include <dlfcn.h>
 #include <map>
 #include <string>
+#include <string.h>
 #include <errno.h>
+#include "thneed.h"
 
 Thneed *g_thneed = NULL;
 int g_fd = -1;
-std::map<std::pair<cl_kernel, int>, std::string> g_args;
+map<pair<cl_kernel, int>, string> g_args;
 
 static inline uint64_t nanos_since_boot() {
   struct timespec t;
@@ -31,11 +32,19 @@ extern "C" {
 int (*my_ioctl)(int filedes, unsigned long request, void *argp) = NULL;
 #undef ioctl
 int ioctl(int filedes, unsigned long request, void *argp) {
+  request &= 0xFFFFFFFF;  // needed on QCOM2
   if (my_ioctl == NULL) my_ioctl = reinterpret_cast<decltype(my_ioctl)>(dlsym(RTLD_NEXT, "ioctl"));
   Thneed *thneed = g_thneed;
 
   // save the fd
   if (request == IOCTL_KGSL_GPUOBJ_ALLOC) g_fd = filedes;
+
+  if (request == IOCTL_KGSL_DRAWCTXT_CREATE) {
+    struct kgsl_drawctxt_create *create = (struct kgsl_drawctxt_create *)argp;
+    create->flags &= ~KGSL_CONTEXT_PRIORITY_MASK;
+    create->flags |= 1 << KGSL_CONTEXT_PRIORITY_SHIFT;   // priority from 1-15, 1 is max priority
+    printf("creating context with flags 0x%x\n", create->flags);
+  }
 
   if (thneed != NULL) {
     if (request == IOCTL_KGSL_GPU_COMMAND) {
@@ -43,9 +52,7 @@ int ioctl(int filedes, unsigned long request, void *argp) {
       if (thneed->record & 1) {
         thneed->timestamp = cmd->timestamp;
         thneed->context_id = cmd->context_id;
-        CachedCommand *ccmd = new CachedCommand(thneed, cmd);
-        //ccmd->disassemble();
-        thneed->cmds.push_back(ccmd);
+        thneed->cmds.push_back(unique_ptr<CachedCommand>(new CachedCommand(thneed, cmd)));
       }
       if (thneed->record & 2) {
         printf("IOCTL_KGSL_GPU_COMMAND(%2zu): flags: 0x%lx    context_id: %u  timestamp: %u\n",
@@ -66,9 +73,7 @@ int ioctl(int filedes, unsigned long request, void *argp) {
       }
 
       if (thneed->record & 1) {
-        struct kgsl_gpuobj_sync_obj *new_objs = (struct kgsl_gpuobj_sync_obj *)malloc(sizeof(struct kgsl_gpuobj_sync_obj)*cmd->count);
-        memcpy(new_objs, objs, sizeof(struct kgsl_gpuobj_sync_obj)*cmd->count);
-        thneed->syncobjs.push_back(std::make_pair(cmd->count, new_objs));
+        thneed->syncobjs.push_back(string((char *)objs, sizeof(struct kgsl_gpuobj_sync_obj)*cmd->count));
       }
     } else if (request == IOCTL_KGSL_DEVICE_WAITTIMESTAMP_CTXTID) {
       struct kgsl_device_waittimestamp_ctxtid *cmd = (struct kgsl_device_waittimestamp_ctxtid *)argp;
@@ -103,12 +108,16 @@ GPUMalloc::GPUMalloc(int size, int fd) {
   memset(&alloc, 0, sizeof(alloc));
   alloc.size = size;
   alloc.flags = 0x10000a00;
-  int ret = ioctl(fd, IOCTL_KGSL_GPUOBJ_ALLOC, &alloc);
+  ioctl(fd, IOCTL_KGSL_GPUOBJ_ALLOC, &alloc);
   void *addr = mmap64(NULL, alloc.mmapsize, 0x3, 0x1, fd, alloc.id*0x1000);
   assert(addr != MAP_FAILED);
 
   base = (uint64_t)addr;
   remaining = size;
+}
+
+GPUMalloc::~GPUMalloc() {
+  // TODO: free the GPU malloced area
 }
 
 void *GPUMalloc::alloc(int size) {
@@ -170,7 +179,7 @@ void CachedCommand::exec(bool wait) {
 Thneed::Thneed() {
   assert(g_fd != -1);
   fd = g_fd;
-  ram = new GPUMalloc(0x40000, fd);
+  ram = make_unique<GPUMalloc>(0x40000, fd);
   record = 1;
   timestamp = -1;
   g_thneed = this;
@@ -235,9 +244,9 @@ void Thneed::execute(float **finputs, float *foutput, bool slow) {
   for (auto it = syncobjs.begin(); it != syncobjs.end(); ++it) {
     struct kgsl_gpuobj_sync cmd;
 
-    cmd.objs = (uint64_t)it->second;
-    cmd.obj_len = it->first * sizeof(struct kgsl_gpuobj_sync_obj);
-    cmd.count = it->first;
+    cmd.objs = (uint64_t)it->data();
+    cmd.obj_len = it->length();
+    cmd.count = it->length() / sizeof(struct kgsl_gpuobj_sync_obj);
 
     ret = ioctl(fd, IOCTL_KGSL_GPUOBJ_SYNC, &cmd);
     assert(ret == 0);
@@ -275,7 +284,7 @@ cl_int (*my_clSetKernelArg)(cl_kernel kernel, cl_uint arg_index, size_t arg_size
 cl_int thneed_clSetKernelArg(cl_kernel kernel, cl_uint arg_index, size_t arg_size, const void *arg_value) {
   if (my_clSetKernelArg == NULL) my_clSetKernelArg = reinterpret_cast<decltype(my_clSetKernelArg)>(dlsym(RTLD_NEXT, "REAL_clSetKernelArg"));
   if (arg_value != NULL) {
-    g_args[std::make_pair(kernel, arg_index)] = std::string((char*)arg_value, arg_size);
+    g_args[make_pair(kernel, arg_index)] = string((char*)arg_value, arg_size);
   }
   cl_int ret = my_clSetKernelArg(kernel, arg_index, arg_size, arg_value);
   return ret;
@@ -310,7 +319,7 @@ cl_int thneed_clEnqueueNDRangeKernel(cl_command_queue command_queue,
     for (int i = 0; i < num_args; i++) {
       char arg_name[0x100];
       clGetKernelArgInfo(kernel, i, CL_KERNEL_ARG_NAME, sizeof(arg_name), arg_name, NULL);
-      std::string arg = g_args[std::make_pair(kernel, i)];
+      string arg = g_args[make_pair(kernel, i)];
 
       if (strcmp(arg_name, "input") == 0 && strcmp(name, "zero_pad_image_float") == 0) {
         cl_mem mem;
@@ -343,7 +352,7 @@ cl_int thneed_clEnqueueNDRangeKernel(cl_command_queue command_queue,
       char arg_name[0x100];
       clGetKernelArgInfo(kernel, i, CL_KERNEL_ARG_TYPE_NAME, sizeof(arg_type), arg_type, NULL);
       clGetKernelArgInfo(kernel, i, CL_KERNEL_ARG_NAME, sizeof(arg_name), arg_name, NULL);
-      std::string arg = g_args[std::make_pair(kernel, i)];
+      string arg = g_args[make_pair(kernel, i)];
       printf("  %s %s", arg_type, arg_name);
       void *arg_value = (void*)arg.data();
       int arg_size = arg.size();
@@ -405,7 +414,7 @@ cl_int thneed_clEnqueueNDRangeKernel(cl_command_queue command_queue,
 //#define SAVE_KERNELS
 
 #ifdef SAVE_KERNELS
-std::map<cl_program, std::string> program_source;
+map<cl_program, string> program_source;
 
 cl_program (*my_clCreateProgramWithSource)(cl_context context, cl_uint count, const char **strings, const size_t *lengths, cl_int *errcode_ret) = NULL;
 cl_program thneed_clCreateProgramWithSource(cl_context context, cl_uint count, const char **strings, const size_t *lengths, cl_int *errcode_ret) {
@@ -440,7 +449,14 @@ cl_program thneed_clCreateProgramWithSource(cl_context context, cl_uint count, c
 #endif
 
 void *dlsym(void *handle, const char *symbol) {
+  // TODO: Find dlsym in a better way. Currently this is hand looked up in libdl.so
+#if defined QCOM
   void *(*my_dlsym)(void *handle, const char *symbol) = (void *(*)(void *handle, const char *symbol))((uintptr_t)dlopen-0x2d4);
+#elif defined QCOM2
+  void *(*my_dlsym)(void *handle, const char *symbol) = (void *(*)(void *handle, const char *symbol))((uintptr_t)dlopen+0x138);
+#else
+  #error "Unsupported platform for thneed"
+#endif
   if (memcmp("REAL_", symbol, 5) == 0) {
     return my_dlsym(handle, symbol+5);
   } else if (strcmp("clEnqueueNDRangeKernel", symbol) == 0) {
